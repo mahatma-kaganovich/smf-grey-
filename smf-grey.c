@@ -44,6 +44,7 @@
 #include <syslog.h>
 #include <time.h>
 #include <unistd.h>
+#include <sys/file.h>
 
 /* How long between cache writes */
 #define CACHE_WRITE_INTERVAL	120
@@ -391,7 +392,7 @@ static int compute_delay(struct context *context, char *dnsbllog) {
 		    !dnsbl->fail_reported) {
 		dnsbl->fail_reported = 1;
 		syslog(LOG_INFO, 
-		    "[INFO] Temporarily disabling DNSBL %s due to %d failures in %ds.\n",
+		    "[INFO] Temporarily disabling DNSBL %s due to %d failures in %lds.\n",
 		    dnsbl->name, dnsbl->fail_count, t - dnsbl->first_fail);
 	    }
 	}
@@ -541,14 +542,14 @@ static void cache_dump(char *file) {
 	else if (rewrite) {
 	    last_rewrite = curtime;
 	    syslog(LOG_INFO, 
-		"[INFO] cache rewrite of %d records completed in %d seconds\n",
+		"[INFO] cache rewrite of %d records completed in %ld seconds\n",
 		records, time(NULL)-curtime);
 	}
     }
 ex:
     if (error && rewrite && dump) {
 	unlink(newfile);
-	close(dump);
+	fclose(dump);
     }
     if (dump0) fclose(dump0);
 }
