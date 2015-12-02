@@ -1,5 +1,6 @@
 /*  Copyright (C) 2005, 2006 by Eugene Kurmanin <me@kurmanin.info>
  *  Additional changes by Tim Kleingeld <thm-smf@takm.com>
+ *  Additional changes by Denis Kaganovich (Dzianis Kahanovich) <mahatma@eu.by>
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -242,6 +243,10 @@ static sfsistat smf_close(SMFICTX *);
 static sfsistat smf_data(SMFICTX *);
 #endif
 
+struct stat cache_stat = { .st_size = 0, .st_ino = 0 };
+static void cache_load(char *file);
+int lines = 0, dirty = 0;
+
 static void strscpy(register char *dst, register const char *src, size_t size) {
     register size_t i;
 
@@ -410,7 +415,7 @@ static void cache_dump(char *file) {
     static int last_write_successful;
     static time_t last_rewrite;
     struct stat orig_stat;
-    FILE *dump = 0;
+    FILE *dump = 0, *dump0 = 0;
     unsigned long i, size = hash_size(HASH_POWER);
     cache_item *it, **parent;
     time_t curtime = time(NULL);
@@ -433,30 +438,37 @@ static void cache_dump(char *file) {
     }
     if (conf.always_rewrite) rewrite = 1;
 
+    if (dump0 = fopen(file, "a")) {
+	    flock(fileno(dump0), LOCK_SH);
+	    if (fstat(fileno(dump0), &orig_stat)) {
+		rewrite = 1;
+	    } else {
+	        /* Changed by other node? Load */
+		if (orig_stat.st_size != cache_stat.st_size || orig_stat.st_ino != cache_stat.st_ino)
+			cache_load(file);
+	    }
+    } else {
+	rewrite = 1;
+    }
+
     /* If we're not rewriting, get the current length of the file so
      * we can truncate to that length if the write fails.
      */
-    if (!rewrite) {
-	if (stat(file, &orig_stat)) {
-	    rewrite = 1;
-	} else {
-	    if (!(dump = fopen(file, "a"))) {
-		syslog(LOG_ERR, "[ERROR] failed to start append to %s: %m", file);
-		return;
-	    }
-	}
-    }
     if (rewrite) {
 	sprintf(newfile, "%s.new", file);
-	if (!(dump = fopen(newfile, "w"))) {
+	syslog(LOG_INFO, "[INFO] cache %s[.new] rewrite\n", newfile);
+	if (!(dump = fopen(newfile, "w")))
 	    syslog(LOG_ERR, "[ERROR] failed to create %s: %m", newfile);
-	    return;
-	}
+    } else {
+	if (!(dump = dump0))
+	    syslog(LOG_ERR, "[ERROR] failed to start append to %s: %m", file);
+	dump0 = 0;
     }
 
     if (!dump)
-	return;
+	goto ex;
 
+    flock(fileno(dump), LOCK_EX);
     if (rewrite) {
 	fprintf(dump, "smf-grey 2 4\n");
     }
@@ -507,54 +519,63 @@ static void cache_dump(char *file) {
 	    it = *parent;
 	}
     }
-    if (fclose(dump) || error) {
-	if (rewrite) {
-	    if (!error) {
-		syslog(LOG_ERR, "[ERROR] failed to finish write to %s: %m", newfile);
-	    }
-	    unlink(newfile);
-	} else {
-	    if (!error) {
-		syslog(LOG_ERR, "[ERROR] failed to finish append to %s: %m", file);
-	    }
-	    truncate(file, orig_stat.st_size);
-	}
-	last_write_successful = 0;
-	return;
-    }
-    if (rewrite && rename(newfile, file)) {
+    if (!error)
+	if (error=fflush(dump))
+	    syslog(LOG_ERR, "[ERROR] failed to flush %s: %m", rewrite ? newfile : file);
+    dirty = 0;
+    if (!error && rewrite && rename(newfile, file)) {
+	cache_stat.st_size = 0;
 	syslog(LOG_ERR, "[ERROR] failed to rename %s: %m", newfile);
-	unlink(newfile);
 	last_write_successful = 0;
-	return;
+	error = 1;
     }
-    last_write_successful = 1;
-    if (rewrite) {
-	last_rewrite = curtime;
-	syslog(LOG_INFO, 
-	    "[INFO] cache rewrite of %d records completed in %d seconds\n",
-	    records, time(NULL)-curtime);
-	
+    cache_stat.st_size = 0;
+    /* broken fs driver? */
+//    if (dump) flock(fileno(dump), LOCK_UN);
+//    if (dump0) flock(fileno(dump0), LOCK_UN);
+    if (!error) {
+	last_write_successful = 1;
+	fstat(fileno(dump), &cache_stat);
+	if (fclose(dump))
+	    syslog(LOG_ERR, "[ERROR] failed to finish (close) write to %s: %m", rewrite ? newfile : file);
+	else if (rewrite) {
+	    last_rewrite = curtime;
+	    syslog(LOG_INFO, 
+		"[INFO] cache rewrite of %d records completed in %d seconds\n",
+		records, time(NULL)-curtime);
+	}
     }
+ex:
+    if (error && rewrite && dump) {
+	unlink(newfile);
+	close(dump);
+    }
+    if (dump0) fclose(dump0);
 }
 
 static void cache_load(char *file) {
     FILE *f;
-    int lines;
     char line[1024];
     int count = 0;
-    unsigned long i, size = hash_size(HASH_POWER);
+    unsigned long i, size = hash_size(HASH_POWER),
+	ino = cache_stat.st_ino, pos = cache_stat.st_size;
     cache_item *it;
     time_t curtime = time(0L);
 
     if (!(f = fopen(file, "r"))) {
+	syslog(LOG_INFO, "[INFO] cache %s open error: %m", file);
 	return;
     }
-    fgets(line, 1024, f);
-    sscanf(line, "%*s %*s %d", &lines);
-    if (lines < 4) {
-	syslog(LOG_ERR, "[ERROR] cache %s has invalid format", file);
-	return;
+    if (!flock(fileno(f), LOCK_SH) && !fstat(fileno(f), &cache_stat)
+	&& ino == cache_stat.st_ino && pos && lines > 3)
+	    fseek(f, pos, SEEK_SET);
+    else {
+	fgets(line, 1024, f);
+	sscanf(line, "%*s %*s %d", &lines);
+	if (lines < 4) {
+		syslog(LOG_ERR, "[ERROR] cache %s has invalid format", file);
+		return;
+	}
     }
     while (!feof(f)) {
 	int i;
@@ -588,6 +609,11 @@ static void cache_load(char *file) {
 	it = cache[new.hash & hash_mask(HASH_POWER)];
 	while (it) {
 	    if (it->hash == new.hash && !strcmp(it->item, new.item)) {
+		/* Cluster concurrence */
+	        if (it->write_status != ST_WRITTEN && (new.status < it->status || (new.status == it->status && new.exptime < it->exptime))) {
+		    SAFE_FREE(new.item);
+		    break;
+		}
 		new.next = it->next;
 		SAFE_FREE(it->item);
 		*it = new;
@@ -665,6 +691,7 @@ static void cache_put(const char *key, long ttl, cache_item_status status, cache
 	if (it->hash == hash && it->exptime > curtime && it->item && !strcmp(key, it->item)) {
 	    if (mode == CACHE_OVER) {
 		if (it->status != status || it->delay != delay) {
+		    dirty = 1;
 		    it->write_status = ST_NOT_WRITTEN;
 		}
 		it->status = status;
@@ -692,6 +719,7 @@ static void cache_put(const char *key, long ttl, cache_item_status status, cache
 	    it->exptime = curtime + ttl;
 	    it->delay = delay;
 	    it->outstanding = outstanding_delta;
+	    dirty = 1;
 	    return;
 	}
 	parent = it;
@@ -709,6 +737,7 @@ static void cache_put(const char *key, long ttl, cache_item_status status, cache
 	    parent->next = it;
 	else
 	    cache[hash & hash_mask(HASH_POWER)] = it;
+	dirty = 1;
     }
 }
 
@@ -1146,7 +1175,10 @@ static int greylist(struct context *context) {
 	    memset(&new_config, 0, sizeof new_config);
 	}
     }
-    if (curtime > last_cache_write + conf.cache_write_interval) {
+    if (!conf.cache_write_interval) {
+	if (!stat(conf.cache_path, &newstat) && newstat.st_size != cache_stat.st_size || newstat.st_ino != cache_stat.st_ino)
+	    cache_load(conf.cache_path);
+    } else if (curtime > last_cache_write + conf.cache_write_interval) {
 	last_cache_write = curtime;
 	cache_dump(conf.cache_path);
     }
@@ -1361,6 +1393,12 @@ static sfsistat smf_envrcpt(SMFICTX *ctx, char **args) {
     strtolower(context->recipient);
     if (conf.tos && to_check(context->recipient)) return SMFIS_CONTINUE;
     stat = greylist(context);
+    if (!conf.cache_write_interval && dirty) {
+	mutex_lock(&cache_mutex);
+	if (dirty) /* queue? unreal? */
+	    cache_dump(conf.cache_path);
+	mutex_unlock(&cache_mutex);
+    }
     if (stat == 2) {
 	do_sleep(1);
 	smfi_setreply(ctx, "550", "5.1.3", "Too many block lists - check http://www.robtex.com/rbls.html");
@@ -1535,8 +1573,10 @@ int main(int argc, char **argv) {
     ret = smfi_main();
     if (ret != MI_SUCCESS) syslog(LOG_ERR, "[ERROR] terminated due to a fatal error");
     if (cache) {
-	syslog(LOG_ERR, "[NOTICE] dumping cache");
-	cache_dump(conf.cache_path);
+	if (conf.cache_write_interval) {
+	    syslog(LOG_ERR, "[NOTICE] dumping cache");
+	    cache_dump(conf.cache_path);
+	}
 	cache_destroy();
     }
     pthread_mutex_destroy(&cache_mutex);
