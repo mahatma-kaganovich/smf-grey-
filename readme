@@ -1,3 +1,18 @@
+Tis is smf-grey+tym greylist sendmail milter, modifyed by me to support
+shared cache file ("clustering"). Default behaviour old, but:
+
+"CacheWriteInterval 0" set "realtime" cache sync mode.
+
+In this mode cache changes will synced ASAP over flock() and
+more grained file IO (append and seek). So, multiple instances
+on multiple servers with same network storage, supported flock()
+and correct inode numbering (same on rename, but new on new file),
+will work with same cache states.
+
+me: Denis Kaganovich (Dzianis Kahanovich) <mahatma@eu.by>
+
+Original readme:
+============================================================================
 About
 =====
   It's a lightweight, fast and reliable Sendmail milter that implements the
