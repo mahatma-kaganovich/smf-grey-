@@ -444,12 +444,13 @@ static void cache_dump(char *file) {
 	    if (fstat(fileno(dump0), &orig_stat)) {
 		rewrite = 1;
 	    } else {
+	        /* init */
+	        if (!(orig_stat.st_size|cache_stat.st_size|cache_stat.st_ino))
+			rewrite = 1;
 	        /* Changed by other node? Load */
-		if (orig_stat.st_size != cache_stat.st_size || orig_stat.st_ino != cache_stat.st_ino)
+		else if (orig_stat.st_size != cache_stat.st_size || orig_stat.st_ino != cache_stat.st_ino)
 			cache_load(file);
 	    }
-    } else {
-	rewrite = 1;
     }
 
     /* If we're not rewriting, get the current length of the file so
