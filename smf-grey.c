@@ -431,27 +431,23 @@ static void cache_dump(char *file) {
 
     if (dump0 = fopen(file, "a")) {
 	flock(fileno(dump0), LOCK_SH);
-	if (fstat(fileno(dump0), &orig_stat)) {
-	    syslog(LOG_ERR, "[ERROR] failed to stat %s: %m", file);
-	    goto ex;
-	/* Changed by other node? */
-	} else if (orig_stat.st_size != cache_stat.st_size || orig_stat.st_ino != cache_stat.st_ino) {
-/*	    if (orig_stat.st_size | cache_stat.st_size | cache_stat.st_ino) */
-	    if (orig_stat.st_size)
-		cache_load(file);
-	    else
-		rewrite = 1; /* init */
-	}
-	if (rewrite) {
-	} if (conf.always_rewrite) {
-		rewrite = 1;
-	} else if (curtime > last_rewrite + 12*3600) {
-	    /* Rewrite the cache from scratch if it's between 2am and 8am and
-	     * we haven't rewritten in the last 12 hours
-	     */
-	    now = localtime(&curtime);
-	    if (now->tm_hour >= 2 && now->tm_hour < 8)
-		rewrite = 1;
+	if (!fstat(fileno(dump0), &orig_stat)) {
+	    /* Changed by other node? */
+	    if (orig_stat.st_size != cache_stat.st_size || orig_stat.st_ino != cache_stat.st_ino) {
+/*	    	if (orig_stat.st_size | cache_stat.st_size | cache_stat.st_ino) */
+		if (orig_stat.st_size)
+		    cache_load(file);
+		else
+		    rewrite = 1; /* init */
+	    }
+	    if (!(rewrite|=conf.always_rewrite) && curtime > last_rewrite + 12*3600) {
+		/* Rewrite the cache from scratch if it's between 2am and 8am and
+		 * we haven't rewritten in the last 12 hours
+		 */
+		now = localtime(&curtime);
+		if (now->tm_hour >= 2 && now->tm_hour < 8)
+		    rewrite = 1;
+	    }
 	}
     }
 
