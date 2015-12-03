@@ -442,7 +442,7 @@ static void cache_dump(char *file) {
 	    else
 		rewrite = 1; /* init */
 	} else if (conf.always_rewrite) {
-		rewrite = 1
+		rewrite = 1;
 	} else if (curtime > last_rewrite + 12*3600) {
 	    /* Rewrite the cache from scratch if it's between 2am and 8am and
 	     * we haven't rewritten in the last 12 hours
