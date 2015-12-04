@@ -430,24 +430,25 @@ static void cache_dump(char *file) {
     }
 
     if (dump0 = fopen(file, "a")) {
+	/* simple ignore lock errors */
 	flock(fileno(dump0), LOCK_SH);
-	if (!fstat(fileno(dump0), &orig_stat)) {
-	    /* Changed by other node? */
-	    if (orig_stat.st_size != cache_stat.st_size || orig_stat.st_ino != cache_stat.st_ino) {
-/*	    	if (orig_stat.st_size | cache_stat.st_size | cache_stat.st_ino) */
-		if (orig_stat.st_size)
-		    cache_load(file);
-		else
-		    rewrite = 1; /* init */
-	    }
-	    if (!(rewrite|=conf.always_rewrite) && curtime > last_rewrite + 12*3600) {
-		/* Rewrite the cache from scratch if it's between 2am and 8am and
-		 * we haven't rewritten in the last 12 hours
-		 */
-		now = localtime(&curtime);
-		if (now->tm_hour >= 2 && now->tm_hour < 8)
-		    rewrite = 1;
-	    }
+	if ((error=fstat(fileno(dump0), &orig_stat)))
+	    goto ex;
+	/* Changed by other node? */
+	if (orig_stat.st_size != cache_stat.st_size || orig_stat.st_ino != cache_stat.st_ino) {
+/*	    if (orig_stat.st_size | cache_stat.st_size | cache_stat.st_ino) */
+	    if (orig_stat.st_size)
+		cache_load(file);
+	    else
+		rewrite = 1; /* init */
+	}
+	if (!(rewrite|=conf.always_rewrite) && curtime > last_rewrite + 12*3600) {
+	    /* Rewrite the cache from scratch if it's between 2am and 8am and
+	     * we haven't rewritten in the last 12 hours
+	     */
+	    now = localtime(&curtime);
+	    if (now->tm_hour >= 2 && now->tm_hour < 8)
+		rewrite = 1;
 	}
     }
 
@@ -546,10 +547,13 @@ static void cache_dump(char *file) {
 	}
     }
 ex:
-    if (error && rewrite && dump) {
-	flock(fileno(dump), LOCK_UN); /* ... */
-	unlink(newfile);
-	fclose(dump);
+    if (error) {
+	syslog(LOG_ERR, "[ERROR] errno=%d '%s'", errno, strerror(errno));
+	if (rewrite && dump) {
+	    flock(fileno(dump), LOCK_UN); /* ... */
+	    unlink(newfile);
+	    fclose(dump);
+	}
     }
     if (dump0) fclose(dump0);
 }
