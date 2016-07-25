@@ -1298,7 +1298,7 @@ static int greylist(struct context *context) {
 	    }
 	    mutex_unlock(&cache_mutex);
 	    if (conf.add_header) {
-		snprintf(context->hdr, sizeof(context->hdr), "delayed for %s at (%s [%s])\n\tfor %s by smf-grey v2.0.0+tym1.2 - http://smfs.sf.net/ http://smfs.takm.com",
+		snprintf(context->hdr, sizeof(context->hdr), "delayed for %s at (%s [%s])\n\tfor %s by smf-grey v2.0.0+tym1.3+ - http://smfs.sf.net/ http://smfs.takm.com https://github.com/mahatma-kaganovich/smf-grey-",
 		    human_time, context->site, context->interface, context->rcpt);
 		add_hdr(context);
 	    }
