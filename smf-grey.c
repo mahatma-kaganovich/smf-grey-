@@ -523,9 +523,11 @@ static void cache_dump(char *file) {
 	    it = *parent;
 	}
     }
-    if (conf.do_flush && !error && (error=fflush(dump)))
-	syslog(LOG_ERR, "[ERROR] failed to flush %s: %m", rewrite ? newfile : file);
-    dirty = 0;
+    if (conf.do_flush) {
+	if (!error && (error=fflush(dump)))
+	    syslog(LOG_ERR, "[ERROR] failed to flush %s: %m", rewrite ? newfile : file);
+	dirty = 0;
+    }
     if (!error && rewrite && rename(newfile, file)) {
 	cache_stat.st_size = 0;
 	syslog(LOG_ERR, "[ERROR] failed to rename %s: %m", newfile);
@@ -548,6 +550,7 @@ static void cache_dump(char *file) {
 		records, time(NULL)-curtime);
 	}
     }
+    dirty = 0;
 ex:
     if (error) {
 	syslog(LOG_ERR, "[ERROR] errno=%d '%s'", errno, strerror(errno));
