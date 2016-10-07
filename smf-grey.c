@@ -46,8 +46,8 @@
 #include <unistd.h>
 #include <sys/file.h>
 
-/* How long between cache writes */
-#define CACHE_WRITE_INTERVAL	120
+/* How long between cache writes. 0 - interactive */
+#define CACHE_WRITE_INTERVAL	0
 #define CACHE_FILE		"/var/spool/smfs/smf-grey.cache"
 /* How often been checks for config file changes (seconds) */
 #define CONFIG_CHECK_INTERVAL	15
@@ -69,6 +69,7 @@
 #define AUTO_BLOCKGUARD		3
 #define DNSBL_MAX_FAIL		6
 #define DNSBL_FAIL_TIME		3600
+#define DO_FLUSH 1
 
 #define MAXLINE			128
 #define HASH_POWER		16
@@ -79,6 +80,7 @@
 
 #define hash_size(x)		((unsigned long) 1 << x)
 #define hash_mask(x)		(hash_size(x) - 1)
+
 
 #ifdef __sun__
 int daemon(int nochdir, int noclose) {
@@ -188,6 +190,7 @@ typedef struct config {
     int cache_write_interval;
     int dnsbl_max_fail;
     int dnsbl_fail_time;
+    int do_flush;
 } config;
 
 typedef struct facilities {
@@ -520,9 +523,8 @@ static void cache_dump(char *file) {
 	    it = *parent;
 	}
     }
-    if (!error)
-	if (error=fflush(dump))
-	    syslog(LOG_ERR, "[ERROR] failed to flush %s: %m", rewrite ? newfile : file);
+    if (conf.do_flush && !error && (error=fflush(dump)))
+	syslog(LOG_ERR, "[ERROR] failed to flush %s: %m", rewrite ? newfile : file);
     dirty = 0;
     if (!error && rewrite && rename(newfile, file)) {
 	cache_stat.st_size = 0;
@@ -532,11 +534,11 @@ static void cache_dump(char *file) {
     }
     cache_stat.st_size = 0;
     /* broken fs driver? bad distributed unlock? usually close() is enought */
-    if (dump0) flock(fileno(dump0), LOCK_UN);
+    if (conf.do_flush && dump0) flock(fileno(dump0), LOCK_UN);
     if (!error) {
 	last_write_successful = 1;
 	fstat(fileno(dump), &cache_stat);
-	flock(fileno(dump), LOCK_UN); /* ...*/
+	if (conf.do_flush) flock(fileno(dump), LOCK_UN); /* ...*/
 	if (fclose(dump))
 	    syslog(LOG_ERR, "[ERROR] failed to finish (close) write to %s: %m", rewrite ? newfile : file);
 	else if (rewrite) {
@@ -550,7 +552,7 @@ ex:
     if (error) {
 	syslog(LOG_ERR, "[ERROR] errno=%d '%s'", errno, strerror(errno));
 	if (rewrite && dump) {
-	    flock(fileno(dump), LOCK_UN); /* ... */
+	    if (conf.do_flush) flock(fileno(dump), LOCK_UN); /* ... */
 	    unlink(newfile);
 	    fclose(dump);
 	}
@@ -859,6 +861,7 @@ static int load_config(config *c) {
     c->cache_write_interval = CACHE_WRITE_INTERVAL;
     c->dnsbl_max_fail = DNSBL_MAX_FAIL;
     c->dnsbl_fail_time = DNSBL_FAIL_TIME;
+    c->do_flush = DO_FLUSH;
     stat(config_file, &config_stat);
     if (!(fp = fopen(config_file, "r"))) return 0;
     while (fgets(buf, sizeof(buf) - 1, fp)) {
@@ -981,6 +984,10 @@ static int load_config(config *c) {
 	}
 	if (!strcasecmp(key, "cachewriteinterval")) {
 	    c->cache_write_interval = translate(val);
+	    continue;
+	}
+	if (!strcasecmp(key, "doflush")) {
+	    c->do_flush = translate(val);
 	    continue;
 	}
 	if (!strcasecmp(key, "dnsblfailtime")) {
