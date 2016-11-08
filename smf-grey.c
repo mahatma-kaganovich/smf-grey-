@@ -536,7 +536,14 @@ static void cache_dump(char *file) {
     }
     cache_stat.st_size = 0;
     /* broken fs driver? bad distributed unlock? usually close() is enought */
-    if (conf.do_flush && dump0) flock(fileno(dump0), LOCK_UN);
+    if(dump0) {
+	if (conf.do_flush)
+	    flock(fileno(dump0), LOCK_UN);
+	else {
+	    fclose(dump0);
+	    dump0 = 0;
+	}
+    }
     if (!error) {
 	last_write_successful = 1;
 	fstat(fileno(dump), &cache_stat);
