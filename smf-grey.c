@@ -587,7 +587,10 @@ static void cache_load(char *file) {
 	&& ino == cache_stat.st_ino && pos && lines > 3)
 	    fseek(f, pos, SEEK_SET);
     else {
-	fgets(line, 1024, f);
+	if (!fgets(line, 1024, f)) {
+		syslog(LOG_ERR, "[ERROR] cache %s read error", file);
+		return;
+	}
 	sscanf(line, "%*s %*s %d", &lines);
 	if (lines < 4) {
 		syslog(LOG_ERR, "[ERROR] cache %s has invalid format", file);
@@ -601,9 +604,11 @@ static void cache_load(char *file) {
 	int status;
 
 	*line = 0;
-	if (fscanf(f, "%1000s %d %ld %d", line, &status,
-		&new.exptime, &new.delay) != 4) {
-	    continue; /* Ignore invalid lines */
+	switch (fscanf(f, "%1000s %d %ld %d", line, &status,
+		&new.exptime, &new.delay)) {
+	    case EOF: goto cl;
+	    case 4: break;
+	    default: continue; /* Ignore invalid lines */
 	}
 	if (new.exptime < curtime) /* Already expired! */
 	    continue;
@@ -615,7 +620,7 @@ static void cache_load(char *file) {
 	new.item = strdup(line);
 	new.hash = hash_code(new.item);
 	for (i = 4; i < lines; i++) {
-	    fscanf(f, "%*s");
+	    if (fscanf(f, "%*s") == EOF) goto cl;
 	}
 	new.outstanding = 0;
 	new.write_status = ST_WRITTEN;
@@ -650,6 +655,7 @@ static void cache_load(char *file) {
 	}
 	count++;
     }
+cl:
     fclose(f);
     for (i = 0; i < size; i++) {
 	it = cache[i];
